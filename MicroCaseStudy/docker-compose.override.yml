@@ -1,0 +1,203 @@
+services:
+  
+  web.apigateway:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Test
+      - ASPNETCORE_HTTP_PORTS=6000
+    expose:
+      - "6000:6000"
+    depends_on:
+      - identityservice.api
+      - saleservice.api
+      - customerservice.api
+    volumes:
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+  
+  identityservice.api:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Test
+      - ASPNETCORE_HTTP_PORTS=6001
+    expose:
+      - "6001:6001"
+    depends_on:
+      postgresql-identity:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+    volumes:
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+
+  postgresql-identity:
+    ports:
+      - '5430:5432'    
+    volumes:
+      - 'postgresql-identity-data:/var/lib/postgresql/data'
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=microidentity
+      - POSTGRES_PASSWORD=1234    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+            
+  customerservice.api:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Test
+      - ASPNETCORE_HTTP_PORTS=6002
+    expose:
+      - "6002:6002"
+    depends_on:
+      postgresql-customer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+    volumes:
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+  
+  postgresql-customer:
+    ports:
+      - '5429:5432'
+    volumes:
+      - 'postgresql-customer-data:/var/lib/postgresql/data'
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=microcustomer
+      - POSTGRES_PASSWORD=1234    
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+      
+  saleservice.api:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Test
+      - ASPNETCORE_HTTP_PORTS=6003
+    expose:
+      - "6003:6003"
+    depends_on:
+      postgresql-sale:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+    volumes:
+      - ~/.aspnet/https:/root/.aspnet/https:ro
+      - ~/.microsoft/usersecrets:/root/.microsoft/usersecrets:ro
+            
+  postgresql-sale:
+    ports:
+      - '5428:5432'
+    volumes:
+      - 'postgresql-sale-data:/var/lib/postgresql/data'
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=microsale
+      - POSTGRES_PASSWORD=1234
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+  
+  rabbitmq:
+    ports:
+      - '5672:5672' # AMQP protokolü için
+      - '15672:15672' # Yönetim paneli için
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+  
+  redis:
+    depends_on:
+      - postgresql-identity
+      - postgresql-customer
+      - postgresql-sale
+    expose:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    environment:
+      - REDIS_REPLICATION_MODE=master
+
+  elasticsearch:
+    depends_on:
+      - postgresql-identity
+      - postgresql-customer
+      - postgresql-sale
+    expose:
+      - '9200:9200'
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data/
+      - ./DockerFiles/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    environment:
+      - discovery.type=single-node
+      - http.host=0.0.0.0
+      - transport.host=0.0.0.0
+      - xpack.security.enabled=false
+      - xpack.monitoring.templates.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - cluster.name=elasticsearch
+      - bootstrap.memory_lock=true
+
+  kibana:
+    depends_on:
+      - elasticsearch
+      - postgresql-identity
+      - postgresql-customer
+      - postgresql-sale
+    expose:
+      - '5601:5601'
+    volumes:
+      - ./DockerFiles/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
+      - kibana-data:/usr/share/kibana/data
+    environment:
+      - xpack.security.enabled=false
+      - xpack.fleet.agents.enabled=false
+
+  nginx:    
+    depends_on:
+      - kibana
+      - rabbitmq
+      - redis
+      - elasticsearch
+      - saleservice.api
+      - postgresql-sale
+      - customerservice.api
+      - postgresql-customer
+      - identityservice.api
+      - postgresql-identity
+      - web.apigateway
+    ports:
+      - '8787:8787'
+      - "6379:6379"
+    volumes:
+      - ./DockerFiles/nginx/localhost.conf:/etc/nginx/nginx.conf
+
+volumes:
+  rabbitmq-data:
+  redis-data:
+  kibana-data:
+  elasticsearch-data:
+  postgresql-sale-data:
+  postgresql-customer-data:
+  postgresql-identity-data:
